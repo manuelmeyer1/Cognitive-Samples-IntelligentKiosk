@@ -34,6 +34,7 @@
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -45,9 +46,13 @@ namespace ServiceHelpers
 {
     public class BingSearchHelper
     {
-        private static string ImageSearchEndPoint = "https://api.cognitive.microsoft.com/bing/v5.0/images/search";
-        private static string AutoSuggestionEndPoint = "https://api.cognitive.microsoft.com/bing/v5.0/suggestions";
-        private static string NewsSearchEndPoint = "https://api.cognitive.microsoft.com/bing/v5.0/news/search";
+        private static string ImageSearchEndPoint = "https://api.cognitive.microsoft.com/bing/v7.0/images/search";
+        private static string ImageInsightsEndPoint = "https://api.cognitive.microsoft.com/bing/v7.0/images/details";
+        private static string AutoSuggestionEndPoint = "https://api.cognitive.microsoft.com/bing/v7.0/suggestions";
+        private static string NewsSearchEndPoint = "https://api.cognitive.microsoft.com/bing/v7.0/news/search";
+
+        private static int RetryCountOnQuotaLimitError = 6;
+        private static int RetryDelayOnQuotaLimitError = 500;
 
         private static HttpClient autoSuggestionClient { get; set; }
         private static HttpClient searchClient { get; set; }
@@ -91,11 +96,38 @@ namespace ServiceHelpers
             searchClient.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", SearchApiKey);
         }
 
+        private static async Task<HttpResponseMessage> RequestAndAutoRetryWhenThrottled(Func<Task<HttpResponseMessage>> action)
+        {
+            int retriesLeft = BingSearchHelper.RetryCountOnQuotaLimitError;
+            int delay = BingSearchHelper.RetryDelayOnQuotaLimitError;
+
+            HttpResponseMessage response = null;
+
+            while (true)
+            {
+                response = await action();
+
+                if ((int)response.StatusCode == 429 && retriesLeft > 0)
+                {
+                    await Task.Delay(delay);
+                    retriesLeft--;
+                    delay *= 2;
+                    continue;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            return response;
+        }
+
         public static async Task<IEnumerable<string>> GetImageSearchResults(string query, string imageContent = "Face", int count = 20, int offset = 0)
         {
             List<string> urls = new List<string>();
 
-            var result = await searchClient.GetAsync(string.Format("{0}?q={1}&safeSearch=Strict&imageType=Photo&color=ColorOnly&count={2}&offset={3}{4}", ImageSearchEndPoint, WebUtility.UrlEncode(query), count, offset, string.IsNullOrEmpty(imageContent) ? "" : "&imageContent=" + imageContent));
+            var result = await RequestAndAutoRetryWhenThrottled(() => searchClient.GetAsync(string.Format("{0}?q={1}&safeSearch=Strict&imageType=Photo&color=ColorOnly&count={2}&offset={3}{4}", ImageSearchEndPoint, WebUtility.UrlEncode(query), count, offset, string.IsNullOrEmpty(imageContent) ? "" : "&imageContent=" + imageContent)));
             result.EnsureSuccessStatusCode();
             var json = await result.Content.ReadAsStringAsync();
             dynamic data = JObject.Parse(json);
@@ -114,7 +146,7 @@ namespace ServiceHelpers
         {
             List<string> suggestions = new List<string>();
 
-            var result = await autoSuggestionClient.GetAsync(string.Format("{0}/?q={1}&mkt={2}", AutoSuggestionEndPoint, WebUtility.UrlEncode(query), market));
+            var result = await RequestAndAutoRetryWhenThrottled(() => autoSuggestionClient.GetAsync(string.Format("{0}/?q={1}&mkt={2}", AutoSuggestionEndPoint, WebUtility.UrlEncode(query), market)));
             result.EnsureSuccessStatusCode();
             var json = await result.Content.ReadAsStringAsync();
             dynamic data = JObject.Parse(json);
@@ -135,7 +167,7 @@ namespace ServiceHelpers
         {
             List<NewsArticle> articles = new List<NewsArticle>();
 
-            var result = await searchClient.GetAsync(string.Format("{0}/?q={1}&count={2}&offset={3}&mkt={4}", NewsSearchEndPoint, WebUtility.UrlEncode(query), count, offset, market));
+            var result = await RequestAndAutoRetryWhenThrottled(() => searchClient.GetAsync(string.Format("{0}/?q={1}&count={2}&offset={3}&mkt={4}", NewsSearchEndPoint, WebUtility.UrlEncode(query), count, offset, market)));
             result.EnsureSuccessStatusCode();
             var json = await result.Content.ReadAsStringAsync();
             dynamic data = JObject.Parse(json);
@@ -157,6 +189,135 @@ namespace ServiceHelpers
             return articles;
         }
 
+        private static async Task<HttpResponseMessage> CallBingImageInsightsAsync(string imgUrl, string module)
+        {
+            var result = await RequestAndAutoRetryWhenThrottled(() => searchClient.GetAsync(string.Format("{0}?imgUrl={1}&modules={2}", ImageInsightsEndPoint, WebUtility.UrlEncode(imgUrl), module)));
+            result.EnsureSuccessStatusCode();
+            return result;
+        }
+
+        private static async Task<HttpResponseMessage> CallBingImageInsightsAsync(Stream stream, string module)
+        {
+            var strContent = new StreamContent(stream);
+            strContent.Headers.ContentDisposition = new ContentDispositionHeaderValue("form-data") { FileName = "AnyNameWorks" };
+
+            var content = new MultipartFormDataContent();
+            content.Add(strContent);
+
+            var result = await RequestAndAutoRetryWhenThrottled(() => searchClient.PostAsync(string.Format("{0}?modules={1}", ImageInsightsEndPoint, module), content));
+            result.EnsureSuccessStatusCode();
+            return result;
+        }
+
+        public static async Task<IEnumerable<VisualSearchCelebrityResult>> GetVisuallySimilarCelebrities(string imgUrl)
+        {
+            var result = await CallBingImageInsightsAsync(imgUrl, "RecognizedEntities");
+            return ParseCelebrityResults(await result.Content.ReadAsStringAsync());
+        }
+
+        public static async Task<IEnumerable<VisualSearchCelebrityResult>> GetVisuallySimilarCelebrities(Stream stream)
+        {
+            var result = await CallBingImageInsightsAsync(stream, "RecognizedEntities");
+            return ParseCelebrityResults(await result.Content.ReadAsStringAsync());
+        }
+
+        private static List<VisualSearchCelebrityResult> ParseCelebrityResults(string json)
+        {
+            List<VisualSearchCelebrityResult> results = new List<VisualSearchCelebrityResult>();
+
+            dynamic data = JObject.Parse(json);
+            if (data.recognizedEntityGroups != null && data.recognizedEntityGroups.value.Count > 0)
+            {
+                for (int i = 0; i < data.recognizedEntityGroups.value.Count; i++)
+                {
+                    for (int j = 0; j < data.recognizedEntityGroups.value[i].recognizedEntityRegions.Count; j++)
+                    {
+                        for (int k = 0; k < data.recognizedEntityGroups.value[i].recognizedEntityRegions[j].matchingEntities.Count; k++)
+                        {
+                            dynamic entity = data.recognizedEntityGroups.value[i].recognizedEntityRegions[j].matchingEntities[k];
+                            results.Add(new VisualSearchCelebrityResult
+                            {
+                                Name = entity.entity.name.Value,
+                                SimilarityScore = Math.Round(entity.matchConfidence.Value, 2),
+                                Occupation = entity.entity.jobTitle != null ? entity.entity.jobTitle.Value : "",
+                                ReferenceUrl = entity.entity.image.hostPageUrl.Value,
+                                ImageUrl = entity.entity.image.contentUrl.Value
+                            });
+                        }
+                    }
+                }
+            }
+            return results;
+        }
+
+        public static async Task<IEnumerable<VisualSearchPhotoResult>> GetVisuallySimilarImages(string imgUrl)
+        {
+            var result = await CallBingImageInsightsAsync(imgUrl, "SimilarImages");
+            return ParsePhotoResults(await result.Content.ReadAsStringAsync());
+        }
+
+        public static async Task<IEnumerable<VisualSearchPhotoResult>> GetVisuallySimilarImages(Stream stream)
+        {
+            var result = await CallBingImageInsightsAsync(stream, "SimilarImages");
+            return ParsePhotoResults(await result.Content.ReadAsStringAsync());
+        }
+
+        private static List<VisualSearchPhotoResult> ParsePhotoResults(string json)
+        {
+            List<VisualSearchPhotoResult> results = new List<VisualSearchPhotoResult>();
+
+            dynamic data = JObject.Parse(json);
+            if (data.visuallySimilarImages != null && data.visuallySimilarImages.value.Count > 0)
+            {
+                for (int i = 0; i < data.visuallySimilarImages.value.Count; i++)
+                {
+                    results.Add(new VisualSearchPhotoResult
+                    {
+                        ImageUrl = data.visuallySimilarImages.value[i].thumbnailUrl.Value
+                    });
+                }
+            }
+
+            return results;
+        }
+
+        public static async Task<IEnumerable<VisualSearchProductResult>> GetVisuallySimilarProducts(string imgUrl)
+        {
+            var result = await CallBingImageInsightsAsync(imgUrl, "SimilarProducts");
+            return ParseProductResults(await result.Content.ReadAsStringAsync());
+        }
+
+        public static async Task<IEnumerable<VisualSearchProductResult>> GetVisuallySimilarProducts(Stream stream)
+        {
+            var result = await CallBingImageInsightsAsync(stream, "SimilarProducts");
+            return ParseProductResults(await result.Content.ReadAsStringAsync());
+        }
+
+        private static List<VisualSearchProductResult> ParseProductResults(string json)
+        {
+            List<VisualSearchProductResult> products = new List<VisualSearchProductResult>();
+
+            dynamic data = JObject.Parse(json);
+            if (data.visuallySimilarProducts != null && data.visuallySimilarProducts.value.Count > 0)
+            {
+                for (int i = 0; i < data.visuallySimilarProducts.value.Count; i++)
+                {
+                    dynamic prod = data.visuallySimilarProducts.value[i];
+                    if (prod?.insightsMetadata?.aggregateOffer?.priceCurrency != null && prod?.insightsMetadata?.aggregateOffer?.lowPrice != null)
+                    {
+                        products.Add(new VisualSearchProductResult
+                        {
+                            Name = prod.insightsMetadata.aggregateOffer.name.Value,
+                            ImageUrl = prod.thumbnailUrl.Value,
+                            ReferenceUrl = prod.hostPageUrl.Value,
+                            Price = string.Format("{0} {1}", prod.insightsMetadata.aggregateOffer.priceCurrency.Value, prod.insightsMetadata.aggregateOffer.lowPrice.Value)
+                        });
+                    }
+                }
+            }
+
+            return products;
+        }
     }
 
     public class NewsArticle
@@ -166,5 +327,28 @@ namespace ServiceHelpers
         public string Url { get; set; }
         public string ThumbnailUrl { get; set; }
         public string Provider { get; set; }
+    }
+
+    public abstract class VisualSearchResult
+    {
+        public string ImageUrl { get; set; }
+        public string ReferenceUrl { get; set; }
+    }
+
+    public class VisualSearchPhotoResult : VisualSearchResult
+    {
+    }
+
+    public class VisualSearchProductResult : VisualSearchResult
+    {
+        public string Name { get; set; }
+        public string Price { get; set; }
+    }
+
+    public class VisualSearchCelebrityResult : VisualSearchResult
+    {
+        public string Name { get; set; }
+        public string Occupation { get; set; }
+        public double SimilarityScore { get; set; }
     }
 }

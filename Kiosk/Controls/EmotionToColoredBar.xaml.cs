@@ -31,18 +31,14 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 // 
 
-using ServiceHelpers;
-using Microsoft.ProjectOxford.Emotion.Contract;
+using Microsoft.ProjectOxford.Common.Contract;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows;
-using Windows.UI.Xaml.Controls;
-using Windows.UI.Xaml.Media;
 using Windows.UI;
 using Windows.UI.Xaml;
+using Windows.UI.Xaml.Controls;
+using Windows.UI.Xaml.Media;
 
 namespace IntelligentKioskSample.Controls
 {
@@ -73,13 +69,13 @@ namespace IntelligentKioskSample.Controls
             InitializeComponent();
         }
 
-        public void UpdateEmotion(Scores scores)
+        public void UpdateEmotion(EmotionScores scores)
         {
-            EmotionData topEmotion = EmotionServiceHelper.ScoresToEmotionData(scores).OrderByDescending(d => d.EmotionScore).First();
+            var topEmotion = scores.ToRankedList().First();
 
-            this.filledBar.Background = this.emotionToColorMapping[topEmotion.EmotionName];
-            this.emptySpaceRowDefinition.Height = new GridLength(1 - topEmotion.EmotionScore, Windows.UI.Xaml.GridUnitType.Star);
-            this.filledSpaceRowDefinition.Height = new GridLength(topEmotion.EmotionScore, Windows.UI.Xaml.GridUnitType.Star);
+            this.filledBar.Background = this.emotionToColorMapping[topEmotion.Key];
+            this.emptySpaceRowDefinition.Height = new GridLength(1 - topEmotion.Value, Windows.UI.Xaml.GridUnitType.Star);
+            this.filledSpaceRowDefinition.Height = new GridLength(topEmotion.Value, Windows.UI.Xaml.GridUnitType.Star);
         }
     }
 }

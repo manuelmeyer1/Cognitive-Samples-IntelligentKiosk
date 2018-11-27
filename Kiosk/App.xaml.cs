@@ -85,11 +85,14 @@ namespace IntelligentKioskSample
                 // propogate settings to the core library
                 SettingsHelper.Instance.SettingsChanged += (target, args) =>
                 {
-                    EmotionServiceHelper.ApiKey = SettingsHelper.Instance.EmotionApiKey;
                     FaceServiceHelper.ApiKey = SettingsHelper.Instance.FaceApiKey;
+                    FaceServiceHelper.ApiKeyRegion = SettingsHelper.Instance.FaceApiKeyRegion;
                     VisionServiceHelper.ApiKey = SettingsHelper.Instance.VisionApiKey;
+                    VisionServiceHelper.ApiKeyRegion = SettingsHelper.Instance.VisionApiKeyRegion;
                     BingSearchHelper.SearchApiKey = SettingsHelper.Instance.BingSearchApiKey;
                     BingSearchHelper.AutoSuggestionApiKey = SettingsHelper.Instance.BingAutoSuggestionApiKey;
+                    TextAnalyticsHelper.ApiKey = SettingsHelper.Instance.TextAnalyticsKey;
+                    TextAnalyticsHelper.ApiKeyRegion = SettingsHelper.Instance.TextAnalyticsApiKeyRegion;
                     TextAnalyticsHelper.ApiKey = SettingsHelper.Instance.TextAnalyticsKey;
                     ImageAnalyzer.PeopleGroupsUserDataFilter = SettingsHelper.Instance.WorkspaceKey;
                     FaceListManager.FaceListsUserDataFilter = SettingsHelper.Instance.WorkspaceKey;
@@ -98,7 +101,6 @@ namespace IntelligentKioskSample
 
                 // callbacks for core library
                 FaceServiceHelper.Throttled = () => ShowThrottlingToast("Face");
-                EmotionServiceHelper.Throttled = () => ShowThrottlingToast("Emotion");
                 VisionServiceHelper.Throttled = () => ShowThrottlingToast("Vision");
                 ErrorTrackingHelper.TrackException = (ex, msg) => LogException(ex, msg);
                 ErrorTrackingHelper.GenericApiCallExceptionHandler = Util.GenericApiCallExceptionHandler;

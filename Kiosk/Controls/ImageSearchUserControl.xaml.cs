@@ -31,28 +31,19 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 // 
 
-using ServiceHelpers;
-using Microsoft.ProjectOxford.Face;
 using Microsoft.ProjectOxford.Face.Contract;
+using ServiceHelpers;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
-using Windows.Foundation;
-using Windows.Foundation.Collections;
 using Windows.Storage;
 using Windows.Storage.Pickers;
-using Windows.UI.Popups;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
-using Windows.UI.Xaml.Controls.Primitives;
 using Windows.UI.Xaml.Data;
-using Windows.UI.Xaml.Input;
-using Windows.UI.Xaml.Media;
-using Windows.UI.Xaml.Navigation;
 
 // The User Control item template is documented at http://go.microsoft.com/fwlink/?LinkId=234236
 
@@ -60,6 +51,10 @@ namespace IntelligentKioskSample.Controls
 {
     public sealed partial class ImageSearchUserControl : UserControl
     {
+        private Task processingLoopTask;
+        private bool isProcessingLoopInProgress;
+        private bool isProcessingPhoto;
+
         public static readonly DependencyProperty ClearStateWhenClosedProperty =
             DependencyProperty.Register(
             "ClearStateWhenClosed",
@@ -76,14 +71,6 @@ namespace IntelligentKioskSample.Controls
             new PropertyMetadata(false)
             );
 
-        public static readonly DependencyProperty DefaultSearchQueryProperty =
-            DependencyProperty.Register(
-            "DefaultSearchQuery",
-            typeof(string),
-            typeof(ImageSearchUserControl),
-            new PropertyMetadata(string.Empty, OnDefaultSearchQueryChanged)
-            );
-
         public static readonly DependencyProperty ImageContentTypeProperty =
             DependencyProperty.Register(
             "ImageContentType",
@@ -92,14 +79,24 @@ namespace IntelligentKioskSample.Controls
             new PropertyMetadata("Face")
             );
 
-        private static void OnDefaultSearchQueryChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-        {
-            (d as ImageSearchUserControl).autoSuggestBox.Text = (string)e.NewValue;
-        }
+        public static readonly DependencyProperty EnableCameraCaptureProperty =
+            DependencyProperty.Register(
+            "EnableCameraCapture",
+            typeof(bool),
+            typeof(ImageSearchUserControl),
+            new PropertyMetadata(false)
+            );
+
+        public static readonly DependencyProperty RequireFaceInCameraCaptureProperty =
+            DependencyProperty.Register(
+            "RequireFaceInCameraCapture",
+            typeof(bool),
+            typeof(ImageSearchUserControl),
+            new PropertyMetadata(true)
+            );
 
         public event EventHandler<IEnumerable<ImageAnalyzer>> OnImageSearchCompleted;
         public event EventHandler OnImageSearchCanceled;
-        public event EventHandler OnImageSearchLocalFilesProvided;
 
         public bool DetectFacesOnLoad
         {
@@ -113,21 +110,33 @@ namespace IntelligentKioskSample.Controls
             set { SetValue(ClearStateWhenClosedProperty, (bool)value); }
         }
 
-        public string DefaultSearchQuery
-        {
-            get { return (string)GetValue(DefaultSearchQueryProperty); }
-            set { SetValue(DefaultSearchQueryProperty, (string)value); }
-        }
-
         public string ImageContentType
         {
             get { return (string)GetValue(ImageContentTypeProperty); }
             set { SetValue(ImageContentTypeProperty, (string)value); }
         }
 
+        public bool EnableCameraCapture
+        {
+            get { return (bool)GetValue(EnableCameraCaptureProperty); }
+            set { SetValue(EnableCameraCaptureProperty, (bool)value); }
+        }
+
+        public bool RequireFaceInCameraCapture
+        {
+            get { return (bool)GetValue(RequireFaceInCameraCaptureProperty); }
+            set { SetValue(RequireFaceInCameraCaptureProperty, (bool)value); }
+        }
+
         public ImageSearchUserControl()
         {
             this.InitializeComponent();
+        }
+
+        public void TriggerSearch(string query)
+        {
+            this.imageResultsGrid.ItemsSource = Enumerable.Empty<string>();
+            this.autoSuggestBox.Text = query;
         }
 
         private async void onQuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
@@ -157,7 +166,7 @@ namespace IntelligentKioskSample.Controls
         {
             if (this.ClearStateWhenClosed)
             {
-                this.autoSuggestBox.Text = this.DefaultSearchQuery;
+                this.autoSuggestBox.Text = "";
                 this.imageResultsGrid.ItemsSource = Enumerable.Empty<string>();
             }
             else
@@ -226,12 +235,7 @@ namespace IntelligentKioskSample.Controls
 
                 if (selectedFiles != null)
                 {
-                    this.imageResultsGrid.ItemsSource = selectedFiles.Select(file => new ImageAnalyzer(file.OpenStreamForReadAsync, file.Path));
-                }
-
-                if (this.OnImageSearchLocalFilesProvided != null)
-                {
-                    this.OnImageSearchLocalFilesProvided(this, EventArgs.Empty);
+                    this.OnImageSearchCompleted?.Invoke(this, selectedFiles.Select(file => new ImageAnalyzer(file.OpenStreamForReadAsync, file.Path)));
                 }
             }
             catch (Exception ex)
@@ -241,6 +245,114 @@ namespace IntelligentKioskSample.Controls
             }
 
             this.progressRing.IsActive = false;
+        }
+
+        private async void OnCameraImageCaptured(object sender, ImageAnalyzer e)
+        {
+            this.cameraCaptureFlyout.Hide();
+            await this.HandleTrainingImageCapture(e);
+        }
+
+        private async Task HandleTrainingImageCapture(ImageAnalyzer img)
+        {
+            var croppedImage = img;
+
+            if (this.RequireFaceInCameraCapture)
+            {
+                croppedImage = await GetPrimaryFaceFromCameraCaptureAsync(img);
+            }
+
+            if (croppedImage != null)
+            {
+                this.OnImageSearchCompleted?.Invoke(this, new ImageAnalyzer[] { croppedImage });
+            }
+        }
+
+        private async Task<ImageAnalyzer> GetPrimaryFaceFromCameraCaptureAsync(ImageAnalyzer img)
+        {
+            if (img == null)
+            {
+                return null;
+            }
+
+            await img.DetectFacesAsync();
+
+            if (img.DetectedFaces == null || !img.DetectedFaces.Any())
+            {
+                return null;
+            }
+
+            // Crop the primary face and return it as the result
+            FaceRectangle rect = img.DetectedFaces.First().FaceRectangle;
+            double heightScaleFactor = 1.8;
+            double widthScaleFactor = 1.8;
+            FaceRectangle biggerRectangle = new FaceRectangle
+            {
+                Height = Math.Min((int)(rect.Height * heightScaleFactor), img.DecodedImageHeight),
+                Width = Math.Min((int)(rect.Width * widthScaleFactor), img.DecodedImageWidth)
+            };
+            biggerRectangle.Left = Math.Max(0, rect.Left - (int)(rect.Width * ((widthScaleFactor - 1) / 2)));
+            biggerRectangle.Top = Math.Max(0, rect.Top - (int)(rect.Height * ((heightScaleFactor - 1) / 1.4)));
+
+            StorageFile tempFile = await ApplicationData.Current.TemporaryFolder.CreateFileAsync(
+                                                    "FaceRecoCameraCapture.jpg",
+                                                    CreationCollisionOption.GenerateUniqueName);
+
+            await Util.CropBitmapAsync(img.GetImageStreamCallback, biggerRectangle, tempFile);
+
+            return new ImageAnalyzer(tempFile.OpenStreamForReadAsync, tempFile.Path);
+        }
+
+        private async void OnCameraFlyoutOpened(object sender, object e)
+        {
+            await this.cameraControl.StartStreamAsync();
+        }
+
+        private async void OnCameraFlyoutClosed(object sender, object e)
+        {
+            await this.cameraControl.StopStreamAsync();
+            this.isProcessingLoopInProgress = false;
+            this.autoCaptureToggle.IsOn = false;
+        }
+
+        private void StartAutoCaptureProcessingLoop()
+        {
+            this.isProcessingLoopInProgress = true;
+
+            if (this.processingLoopTask == null || this.processingLoopTask.Status != TaskStatus.Running)
+            {
+                this.processingLoopTask = Task.Run(() => this.AutoCaptureProcessingLoop());
+            }
+        }
+
+        private async void AutoCaptureProcessingLoop()
+        {
+            while (this.isProcessingLoopInProgress)
+            {
+                await this.Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, async () =>
+                {
+                    if (!this.isProcessingPhoto)
+                    {
+                        this.isProcessingPhoto = true;
+                        await this.HandleTrainingImageCapture(await this.cameraControl.TakeAutoCapturePhoto());
+                        this.isProcessingPhoto = false;
+                    }
+                });
+
+                await Task.Delay(1000);
+            }
+        }
+
+        private void OnCameraAutoCaptureToggleChanged(object sender, RoutedEventArgs e)
+        {
+            if (this.autoCaptureToggle.IsOn)
+            {
+                this.StartAutoCaptureProcessingLoop();
+            }
+            else
+            {
+                this.isProcessingLoopInProgress = false;
+            }
         }
     }
 }

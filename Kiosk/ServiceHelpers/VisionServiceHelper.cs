@@ -49,7 +49,7 @@ namespace ServiceHelpers
 
         static VisionServiceHelper()
         {
-            InitializeEmotionService();
+            InitializeVisionService();
         }
 
         public static Action Throttled;
@@ -68,14 +68,31 @@ namespace ServiceHelpers
                 apiKey = value;
                 if (changed)
                 {
-                    InitializeEmotionService();
+                    InitializeVisionService();
                 }
             }
         }
 
-        private static void InitializeEmotionService()
+        private static string apiKeyRegion;
+        public static string ApiKeyRegion
         {
-            visionClient = new VisionServiceClient(apiKey);
+            get { return apiKeyRegion; }
+            set
+            {
+                var changed = apiKeyRegion != value;
+                apiKeyRegion = value;
+                if (changed)
+                {
+                    InitializeVisionService();
+                }
+            }
+        }
+
+        private static void InitializeVisionService()
+        {
+            visionClient = ApiKeyRegion != null ?
+                new VisionServiceClient(ApiKey, string.Format("https://{0}.api.cognitive.microsoft.com/vision/v1.0", ApiKeyRegion)) :
+                new VisionServiceClient(ApiKey);
         }
 
         private static async Task<TResponse> RunTaskWithAutoRetryOnQuotaLimitExceededError<TResponse>(Func<Task<TResponse>> action)
@@ -132,6 +149,16 @@ namespace ServiceHelpers
         public static async Task<AnalysisResult> DescribeAsync(string imageUrl)
         {
             return await RunTaskWithAutoRetryOnQuotaLimitExceededError<AnalysisResult>(() => visionClient.DescribeAsync(imageUrl));
+        }
+
+        public static async Task<OcrResults> RecognizeTextAsync(string imageUrl)
+        {
+            return await RunTaskWithAutoRetryOnQuotaLimitExceededError<OcrResults>(() => visionClient.RecognizeTextAsync(imageUrl));
+        }
+
+        public static async Task<OcrResults> RecognizeTextAsync(Func<Task<Stream>> imageStreamCallback)
+        {
+            return await RunTaskWithAutoRetryOnQuotaLimitExceededError<OcrResults>(async () => await visionClient.RecognizeTextAsync(await imageStreamCallback()));
         }
     }
 }

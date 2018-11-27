@@ -121,16 +121,22 @@ namespace IntelligentKioskSample
                 this.FaceApiKey = value.ToString();
             }
 
-            value = ApplicationData.Current.RoamingSettings.Values["EmotionApiKey"];
+            value = ApplicationData.Current.RoamingSettings.Values["FaceApiKeyRegion"];
             if (value != null)
             {
-                this.EmotionApiKey = value.ToString();
+                this.FaceApiKeyRegion = value.ToString();
             }
 
             value = ApplicationData.Current.RoamingSettings.Values["VisionApiKey"];
             if (value != null)
             {
                 this.VisionApiKey = value.ToString();
+            }
+
+            value = ApplicationData.Current.RoamingSettings.Values["VisionApiKeyRegion"];
+            if (value != null)
+            {
+                this.VisionApiKeyRegion = value.ToString();
             }
 
             value = ApplicationData.Current.RoamingSettings.Values["BingSearchApiKey"];
@@ -155,6 +161,12 @@ namespace IntelligentKioskSample
             if (value != null)
             {
                 this.TextAnalyticsKey = value.ToString();
+            }
+
+            value = ApplicationData.Current.RoamingSettings.Values["TextAnalyticsApiKeyRegion"];
+            if (value != null)
+            {
+                this.TextAnalyticsApiKeyRegion = value.ToString();
             }
 
             value = ApplicationData.Current.RoamingSettings.Values["CameraName"];
@@ -183,24 +195,16 @@ namespace IntelligentKioskSample
                 }
             }
 
-            value = ApplicationData.Current.RoamingSettings.Values["DriverMonitoringSleepingThreshold"];
+            value = ApplicationData.Current.RoamingSettings.Values["CustomVisionPredictionApiKey"];
             if (value != null)
             {
-                double threshold;
-                if (double.TryParse(value.ToString(), out threshold))
-                {
-                    this.DriverMonitoringSleepingThreshold = threshold;
-                }
+                this.CustomVisionPredictionApiKey = value.ToString();
             }
 
-            value = ApplicationData.Current.RoamingSettings.Values["DriverMonitoringYawningThreshold"];
+            value = ApplicationData.Current.RoamingSettings.Values["CustomVisionTrainingApiKey"];
             if (value != null)
             {
-                double threshold;
-                if (double.TryParse(value.ToString(), out threshold))
-                {
-                    this.DriverMonitoringYawningThreshold = threshold;
-                }
+                this.CustomVisionTrainingApiKey = value.ToString();
             }
 
             // load mall kiosk demo custom settings from file as the content is too big to be saved as a string-like setting
@@ -241,15 +245,14 @@ namespace IntelligentKioskSample
             }
         }
 
-
-        private string emotionApiKey = string.Empty;
-        public string EmotionApiKey
+        private string faceApiKeyRegion = "westus";
+        public string FaceApiKeyRegion
         {
-            get { return this.emotionApiKey; }
+            get { return this.faceApiKeyRegion; }
             set
             {
-                this.emotionApiKey = value;
-                this.OnSettingChanged("EmotionApiKey", value);
+                this.faceApiKeyRegion = value;
+                this.OnSettingChanged("FaceApiKeyRegion", value);
             }
         }
 
@@ -261,6 +264,17 @@ namespace IntelligentKioskSample
             {
                 this.visionApiKey = value;
                 this.OnSettingChanged("VisionApiKey", value);
+            }
+        }
+
+        private string visionApiKeyRegion = "westus";
+        public string VisionApiKeyRegion
+        {
+            get { return this.visionApiKeyRegion; }
+            set
+            {
+                this.visionApiKeyRegion = value;
+                this.OnSettingChanged("VisionApiKeyRegion", value);
             }
         }
 
@@ -319,6 +333,17 @@ namespace IntelligentKioskSample
             }
         }
 
+        private string textAnalyticsApiKeyRegion = "westus";
+        public string TextAnalyticsApiKeyRegion
+        {
+            get { return textAnalyticsApiKeyRegion; }
+            set
+            {
+                this.textAnalyticsApiKeyRegion = value;
+                this.OnSettingChanged("TextAnalyticsApiKeyRegion", value);
+            }
+        }
+
         private string cameraName = string.Empty;
         public string CameraName
         {
@@ -352,25 +377,48 @@ namespace IntelligentKioskSample
             }
         }
 
-        private double driverMonitoringSleepingThreshold = RealtimeDriverMonitoring.DefaultSleepingApertureThreshold;
-        public double DriverMonitoringSleepingThreshold
+        private string customVisionTrainingApiKey = string.Empty;
+        public string CustomVisionTrainingApiKey
         {
-            get { return this.driverMonitoringSleepingThreshold; }
+            get { return this.customVisionTrainingApiKey; }
             set
             {
-                this.driverMonitoringSleepingThreshold = value;
-                this.OnSettingChanged("DriverMonitoringSleepingThreshold", value);
+                this.customVisionTrainingApiKey = value;
+                this.OnSettingChanged("CustomVisionTrainingApiKey", value);
             }
         }
 
-        private double driverMonitoringYawningThreshold = RealtimeDriverMonitoring.DefaultYawningApertureThreshold;
-        public double DriverMonitoringYawningThreshold
+        private string customVisionPredictionApiKey = string.Empty;
+        public string CustomVisionPredictionApiKey
         {
-            get { return this.driverMonitoringYawningThreshold; }
+            get { return this.customVisionPredictionApiKey; }
             set
             {
-                this.driverMonitoringYawningThreshold = value;
-                this.OnSettingChanged("DriverMonitoringYawningThreshold", value);
+                this.customVisionPredictionApiKey = value;
+                this.OnSettingChanged("CustomVisionPredictionApiKey", value);
+            }
+        }
+
+        public string[] AvailableApiRegions
+        {
+            get
+            {
+                return new string[]
+                {
+                    "westus",
+                    "westus2",
+                    "eastus",
+                    "eastus2",
+                    "westcentralus",
+                    "southcentralus",
+                    "westeurope",
+                    "northeurope",
+                    "southeastasia",
+                    "eastasia",
+                    "japaneast",
+                    "australiaeast",
+                    "brazilsouth"
+                };
             }
         }
     }

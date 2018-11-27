@@ -31,14 +31,15 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 // 
 
-using ServiceHelpers;
-using Microsoft.ProjectOxford.Common;
 using Microsoft.ProjectOxford.Face;
 using Microsoft.ProjectOxford.Face.Contract;
+using Microsoft.Rest;
+using ServiceHelpers;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
 using Windows.Devices.Enumeration;
 using Windows.Graphics.Display;
@@ -81,6 +82,18 @@ namespace IntelligentKioskSample
                 errorDetails = commonException.Error.Message;
             }
 
+            Microsoft.ProjectOxford.Vision.ClientException visionException = ex as Microsoft.ProjectOxford.Vision.ClientException;
+            if (visionException?.Error?.Message != null)
+            {
+                errorDetails = visionException.Error.Message;
+            }
+
+            HttpOperationException httpException = ex as HttpOperationException;
+            if (httpException?.Response?.ReasonPhrase != null)
+            {
+                errorDetails = string.Format("{0}. The error message was \"{1}\".", ex.Message, httpException?.Response?.ReasonPhrase);
+            }
+
             return errorDetails;
         }
 
@@ -114,7 +127,41 @@ namespace IntelligentKioskSample
             return deviceInfo.OrderBy(d => d.Name).Select(d => d.Name);
         }
 
-        async public static Task<ImageSource> GetCroppedBitmapAsync(Func<Task<Stream>> originalImgFile, Microsoft.ProjectOxford.Common.Rectangle rectangle)
+        async private static Task CropBitmapAsync(Stream localFileStream, FaceRectangle rectangle, StorageFile resultFile)
+        {
+            //Get pixels of the crop region
+            var pixels = await GetCroppedPixelsAsync(localFileStream.AsRandomAccessStream(), rectangle);
+
+            // Save result to new image
+            using (Stream resultStream = await resultFile.OpenStreamForWriteAsync())
+            {
+                IRandomAccessStream randomAccessStream = resultStream.AsRandomAccessStream();
+                BitmapEncoder encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId, randomAccessStream);
+
+                encoder.SetPixelData(BitmapPixelFormat.Bgra8,
+                                        BitmapAlphaMode.Ignore,
+                                        (uint)rectangle.Width, (uint)rectangle.Height,
+                                        DisplayInformation.GetForCurrentView().LogicalDpi, DisplayInformation.GetForCurrentView().LogicalDpi, pixels);
+
+                await encoder.FlushAsync();
+            }
+        }
+
+        async public static Task<ImageSource> DownloadAndCropBitmapAsync(string imageUrl, FaceRectangle rectangle)
+        {
+            byte[] imgBytes = await new System.Net.Http.HttpClient().GetByteArrayAsync(imageUrl);
+            using (Stream stream = new MemoryStream(imgBytes))
+            {
+                return await GetCroppedBitmapAsync(stream.AsRandomAccessStream(), rectangle);
+            }
+        }
+
+        async public static Task CropBitmapAsync(Func<Task<Stream>> localFile, FaceRectangle rectangle, StorageFile resultFile)
+        {
+            await CropBitmapAsync(await localFile(), rectangle, resultFile);
+        }
+
+        async public static Task<ImageSource> GetCroppedBitmapAsync(Func<Task<Stream>> originalImgFile, FaceRectangle rectangle)
         {
             try
             {
@@ -130,7 +177,7 @@ namespace IntelligentKioskSample
             }
         }
 
-        async public static Task<ImageSource> GetCroppedBitmapAsync(IRandomAccessStream stream, Microsoft.ProjectOxford.Common.Rectangle rectangle)
+        async public static Task<ImageSource> GetCroppedBitmapAsync(IRandomAccessStream stream, FaceRectangle rectangle)
         {
             var pixels = await GetCroppedPixelsAsync(stream, rectangle);
 
@@ -141,7 +188,7 @@ namespace IntelligentKioskSample
             return cropBmp;
         }
 
-        async private static Task<byte[]> GetCroppedPixelsAsync(IRandomAccessStream stream, Rectangle rectangle)
+        async private static Task<byte[]> GetCroppedPixelsAsync(IRandomAccessStream stream, FaceRectangle rectangle)
         {
             // Create a decoder from the stream. With the decoder, we can get  
             // the properties of the image. 
@@ -192,6 +239,47 @@ namespace IntelligentKioskSample
             {
                 list.Add(item);
             }
+        }
+
+        internal static async Task<Stream> ResizePhoto(Stream photo, int height)
+        {
+            InMemoryRandomAccessStream result = new InMemoryRandomAccessStream();
+            await ResizePhoto(photo, height, result);
+            return result.AsStream();
+        }
+
+        internal static async Task<Tuple<double, double>> ResizePhoto(Stream photo, int height, StorageFile resultFile)
+        {
+            var resultStream = (await resultFile.OpenStreamForWriteAsync()).AsRandomAccessStream();
+            var result = await ResizePhoto(photo, height, resultStream);
+            resultStream.Dispose();
+
+            return result;
+        }
+
+        private static async Task<Tuple<double, double>> ResizePhoto(Stream photo, int height, IRandomAccessStream resultStream)
+        {
+            WriteableBitmap wb = new WriteableBitmap(1, 1);
+            wb = await wb.FromStream(photo.AsRandomAccessStream());
+
+            int originalWidth = wb.PixelWidth;
+            int originalHeight = wb.PixelHeight;
+
+            if (wb.PixelHeight > height)
+            {
+                wb = wb.Resize((int)(((double)wb.PixelWidth / wb.PixelHeight) * height), height, WriteableBitmapExtensions.Interpolation.Bilinear);
+            }
+
+            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId, resultStream);
+
+            encoder.SetPixelData(BitmapPixelFormat.Bgra8,
+                                    BitmapAlphaMode.Ignore,
+                                    (uint)wb.PixelWidth, (uint)wb.PixelHeight,
+                                    DisplayInformation.GetForCurrentView().LogicalDpi, DisplayInformation.GetForCurrentView().LogicalDpi, wb.PixelBuffer.ToArray());
+
+            await encoder.FlushAsync();
+
+            return new Tuple<double, double>((double)originalWidth / wb.PixelWidth, (double)originalHeight / wb.PixelHeight);
         }
     }
 }

@@ -76,7 +76,7 @@ namespace IntelligentKioskSample
                 {
                     Symbol = Symbol.Contact2,
                     Label = "Face Identification Setup",
-                    DestPage = typeof(PersonGroupsPage)
+                    DestPage = typeof(FaceIdentificationSetup)
                 },
 
                 new NavMenuItem()
@@ -140,7 +140,15 @@ namespace IntelligentKioskSample
                 NavMenuList.SelectedItem = navMenuItem;
             }
 
-            AppFrame.Navigate(destPage, string.Empty, new Windows.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo());
+            NavigateToPage(destPage);
+        }
+
+        public void NavigateToPage(Type destPage)
+        {
+            if (this.AppFrame.CurrentSourcePageType != destPage)
+            {
+                AppFrame.Navigate(destPage, string.Empty, new Windows.UI.Xaml.Media.Animation.SuppressNavigationTransitionInfo());
+            }
         }
 
         public Frame AppFrame { get { return this.frame; } }
